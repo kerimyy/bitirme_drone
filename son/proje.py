@@ -25,7 +25,7 @@ TargetCircleMultiplayer = 3
 enkUzunlukRed = 100
 enkUzunlukBlue = 100
 
-repeat = 3
+repeat = 2
 
 font = cv2.FONT_HERSHEY_SIMPLEX
 points = deque(maxlen=32)
@@ -172,7 +172,7 @@ def imageCallback(data):
                             if (MODE_IRIS == MODE_RED_ALIGN and (int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis)**2):
                                 InsideCircle = True
         
-        if(counter % UpdateRate == 0 and redFound):
+        if(counter % UpdateRate == 0):
 
             DisplayDx = DxCount
             DisplayDy = DyCount
@@ -233,7 +233,7 @@ def imageCallback(data):
                     print("su bırakıldı")
                     time.sleep(2)
                     InsideCircle = False
-                    if repeat > 0:
+                    if repeat > 1:
                         MODE_IRIS = MODE_GO_BLUE
                         repeat = repeat -1
                     else: 
@@ -288,7 +288,7 @@ def imageCallback(data):
                             if (MODE_IRIS == MODE_BLUE_ALIGN and int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis)**2:
                                 InsideCircle = True
         
-        if(counter % UpdateRate == 0 and blueFound):
+        if(counter % UpdateRate == 0):
 
             DisplayDx = DxCount
             DisplayDy = DyCount
@@ -418,7 +418,7 @@ def arm_and_takeoff(aTargetAltitude):
         time.sleep(1)
     MODE = MODE_NAVIGATION
 
-def gorev(x1,y1,x2,y2,alt):
+def paralel(x1,y1,x2,y2,alt):
     if vehicle.mode is not VehicleMode("GUIDED"):
         vehicle.mode = VehicleMode("GUIDED")
     cmds.clear()
@@ -476,8 +476,48 @@ def send_ned_velocity(velocity_x, velocity_y, velocity_z, duration):
         vehicle.send_mavlink(msg)
         time.sleep(1)
 
-     
+def haversine(lon1, lat1, lon2, lat2):
+    """
+    Calculate the great circle distance in kilometers between two points 
+    on the earth (specified in decimal degrees)
+    """
+    # convert decimal degrees to radians 
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
 
+    # haversine formula 
+    dlon = lon2 - lon1 
+    dlat = lat2 - lat1 
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a)) 
+    r = 6371 # Radius of earth in kilometers. Use 3956 for miles. Determines return value units.
+    km = c*r
+    m = km*1000
+    return m     
+
+def spiralNavCircle(x_init,y_init,max_r):
+    r = 20
+    N = 7
+    dis = 40
+    cycle = 30
+    alt = 20
+    dpow = pow(10,-5.8)
+    cmds.clear()
+    time.sleep(1)
+    cmds.add(Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 0, alt))
+    for i in range(0,N):
+        for j in range(0,cycle):
+            t = (2*math.pi)*j/cycle
+            sp = dis*j/cycle
+            dr = sp + r 
+            dy=dr*math.sin(t)
+            dx=dr*math.cos(t)
+            x = dx*dpow + x_init
+            y = dy*dpow + y_init
+            cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,x,y,alt))
+        r += dis
+    cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,x,y,alt))
+    cmds.upload()
+    time.sleep(1)
 
 def mainControl(data):
     global MODE_IRIS
@@ -573,7 +613,8 @@ def mainControl(data):
 
 if __name__ == "__main__":
     arm_and_takeoff(20)
-    gorev(-35.36311117 ,149.16577231,-35.36349584 ,149.16614279,20)
+    #paralel(-35.36311117 ,149.16577231,-35.36349584 ,149.16614279,20)
+    spiralNavCircle(-35.36333963,149.16595371,100)
     rospy.init_node('drone_control', anonymous=True)
     rospy.Subscriber("/clock", numpy_msg(Clock), mainControl)
     rospy.Subscriber("/webcam/image_raw", numpy_msg(Image), imageCallback)

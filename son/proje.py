@@ -1,3 +1,4 @@
+from asyncio import sleep
 from site import venv
 import dronekit_sitl
 from dronekit import Command,connect, VehicleMode, LocationGlobalRelative
@@ -9,6 +10,7 @@ from rospy.numpy_msg import numpy_msg
 import numpy as np
 from std_srvs.srv import *
 from sensor_msgs.msg import Image
+from rosgraph_msgs.msg import Clock
 import imutils
 from collections import deque
 import math
@@ -23,7 +25,8 @@ TargetCircleMultiplayer = 3
 enkUzunlukRed = 100
 enkUzunlukBlue = 100
 
-MODE_NAVIGATION = 0
+repeat = 3
+
 font = cv2.FONT_HERSHEY_SIMPLEX
 points = deque(maxlen=32)
 counter = 0
@@ -38,15 +41,26 @@ DisplayTreshhold = 0
 enkUzunluk = 100
 Xmovement = 0
 Ymovement = 0
-red = color()
-blue = color()
+redPool = color()
+bluePool = color()
+
 sitl = dronekit_sitl.start_default()
 connection_string = "127.0.0.1:14550"
 print("Connecting to vehicle on: %s" % (connection_string))
 vehicle = connect(connection_string, wait_ready=True)
 cmds = vehicle.commands
-
 sleepRate = 1/30
+
+global MODE_NAVIGATION
+global MODE_RED_BLUE_FOUND
+global MODE_RED_ALIGN 
+global MODE_BLUE_ALIGN 
+global MODE_RTL 
+global MODE_GO_BLUE 
+global MODE_GO_RED 
+global MODE_GO_HOME
+global MODE_IRIS 
+global LAST_MODE 
 
 MODE_NAVIGATION = 0
 MODE_RED_BLUE_FOUND = 1
@@ -60,17 +74,20 @@ MODE_IRIS = MODE_NAVIGATION
 LAST_MODE = -1
 
 def imageCallback(data):
-    
     global MODE_IRIS
     global InsideCircle
     global enkUzunlukRed
     global enkUzunlukBlue
-    Ymovement = 0
-    Xmovement = 0
+    global repeat
+    DxCount = 0.0
+    DyCount = 0.0
+    global DisplayDx
+    global DisplayDy 
+    redFound = False
+    blueFound = False
+    #rate = rospy.Rate(100)
 
     frame = np.frombuffer(data.data, dtype=np.uint8).reshape(data.height, data.width, -1)	
-    
-
     blurred = cv2.GaussianBlur(frame, (11, 11), 0)
     hsvFrame = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
     # redMask = cv2.inRange(hsv, (94, 80, 2), (126, 255, 255))
@@ -119,77 +136,75 @@ def imageCallback(data):
 
                 center = (int(Middle["m10"] / Middle["m00"]), int(Middle["m01"] / Middle["m00"]))
 
-                if raduis > 60:
+                if raduis > 50:
                     cv2.circle(frame,(int (x),int (y)),int(raduis),(0,0,0),2)
                     cv2.circle(frame,center,5,(0,0,0),-1)
                     points.appendleft(center)
 
-                    red.isFind =True
-                    
-                    print("kırmızı bulundu",red.isFind)
+                    redPool.isFind =True
+                    redFound = True
+                    print("Kırmızı bulundu")
                     if(enkUzunlukRed == 100):
-                        red.x=vehicle.location.global_relative_frame.lat
-                        red.y=vehicle.location.global_relative_frame.lon
+                        redPool.x=vehicle.location.global_relative_frame.lat
+                        redPool.y=vehicle.location.global_relative_frame.lon
                 
 
-        DxCount = 0.0
-        DyCount = 0.0
+                    DxCount = 0.0
+                    DyCount = 0.0
 
-        for i in np.arange(1, len(points)):
-            if points[i - 1] is None or points[i] is None:
-                continue
-            #check if 400,400 is in surface of circle ((x,y),raduis) if case then no need to do calculations
+                    for i in np.arange(1, len(points)):
+                        if points[i - 1] is None or points[i] is None:
+                            continue
+                        #check if 400,400 is in surface of circle ((x,y),raduis) if case then no need to do calculations
 
-            if i == 1:
-                
-                #print("Y points: " + str(points[i][1]))
+                        if i == 1:
+                            
+                            #print("Y points: " + str(points[i][1]))
 
-                DxCount = float(points[i][0])-320.0 
-                DyCount = 250 - float(points[i][1])
+                            DxCount = float(points[i][0])-320.0 
+                            DyCount = 250 - float(points[i][1])
 
-                cv2.line(frame, points[i - 1], (320,250), (0, 255, 0), 5)
+                            cv2.line(frame, points[i - 1], (320,250), (0, 255, 0), 5)
 
-                #cv2.putText(frame,str(DxCount),(10,100), font, 1,(255,0,0),2,cv2.LINE_AA)
-                #cv2.putText(frame,str(DyCount),(10,150), font, 1,(255,0,0),2,cv2.LINE_AA)
-                InsideCircle = False
-                if (MODE_IRIS == MODE_RED_ALIGN and int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis/2)**2:
-                    InsideCircle = True
-
-    if(counter % UpdateRate ) == 0 and (MODE_IRIS == MODE_RED_ALIGN or MODE_IRIS == MODE_NAVIGATION):
-
-        DisplayDx = DxCount
-        DisplayDy = DyCount
-
-        Xmovement = (DxCount / DivisionValueX)
-        Ymovement = (DyCount / DivisionValueY)
-
-        if Xmovement > MaxMovementRatePositive:
-            Xmovement = MaxMovementRatePositive
-        elif Xmovement < MaxMovementRateNegative:
-            Xmovement = MaxMovementRateNegative
-        if Ymovement > MaxMovementRatePositive:
-            Ymovement = MaxMovementRatePositive
-        elif Ymovement < MaxMovementRateNegative:
-            Ymovement = MaxMovementRateNegative
-
-        AltitudeCommand = 0.0
-    
+                            #cv2.putText(frame,str(DxCount),(10,100), font, 1,(255,0,0),2,cv2.LINE_AA)
+                            #cv2.putText(frame,str(DyCount),(10,150), font, 1,(255,0,0),2,cv2.LINE_AA)
+                            InsideCircle = False
+                            if (MODE_IRIS == MODE_RED_ALIGN and (int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis)**2):
+                                InsideCircle = True
         
-        hipo = math.sqrt(Xmovement * Xmovement + Ymovement * Ymovement)
-        if hipo != 0.0:
-            if hipo < enkUzunlukRed:
-                print("daha yakın nokta bulundu")
-                enkUzunlukRed = hipo
-                red.x=vehicle.location.global_relative_frame.lat
-                red.y=vehicle.location.global_relative_frame.lon
+        if(counter % UpdateRate == 0 and redFound):
 
-                
+            DisplayDx = DxCount
+            DisplayDy = DyCount
+
+            Xmovement = (DxCount / DivisionValueX)
+            Ymovement = (DyCount / DivisionValueY)
+
+            if Xmovement > MaxMovementRatePositive:
+                Xmovement = MaxMovementRatePositive
+            elif Xmovement < MaxMovementRateNegative:
+                Xmovement = MaxMovementRateNegative
+            if Ymovement > MaxMovementRatePositive:
+                Ymovement = MaxMovementRatePositive
+            elif Ymovement < MaxMovementRateNegative:
+                Ymovement = MaxMovementRateNegative
+
+            AltitudeCommand = 0.0
+        
             
-                print("kırmızı x:",red.x)
-                print("kırmızı y:",red.y)
+            hipo = math.sqrt(Xmovement * Xmovement + Ymovement * Ymovement)
+            if hipo != 0.0:
+                if hipo < enkUzunlukRed:
+                    print("daha yakın nokta bulundu")
+                    enkUzunlukRed = hipo
+                    redPool.x=vehicle.location.global_relative_frame.lat
+                    redPool.y=vehicle.location.global_relative_frame.lon
+                    print("kırmızı x:",redPool.x)
+                    print("kırmızı y:",redPool.y)
+
         if(MODE_IRIS == MODE_RED_ALIGN):
-            Ymovement = Ymovement * 30
-            Xmovement = Xmovement * 30
+            Ymovement = Ymovement * 35
+            Xmovement = Xmovement * 35
             altsinir = 0.2
             if Ymovement < 0.05 and Xmovement < 0.05:
                 Ymovement = 0
@@ -212,17 +227,21 @@ def imageCallback(data):
                     goto_position_target_local_ned(Ymovement, Xmovement, 0)
 
             else:
-                if vehicle.location.global_relative_frame.alt < 5:
+                if vehicle.location.global_relative_frame.alt < 10:
                     print("iniş tamamlandı su bırakılıyor...")
                     time.sleep(10)
                     print("su bırakıldı")
                     time.sleep(2)
                     InsideCircle = False
-                    MODE_IRIS = MODE_GO_HOME 
+                    if repeat > 0:
+                        MODE_IRIS = MODE_GO_BLUE
+                        repeat = repeat -1
+                    else: 
+                        MODE_IRIS = MODE_GO_HOME 
                 else:
                     print("iniş")
                     goto_position_target_local_ned(Ymovement, Xmovement, 0.5)
-                    print(" Attitude: %s" % vehicle.location.global_relative_frame.alt)
+                    print(" Altitude: %s" % vehicle.location.global_relative_frame.alt)
 
     if (MODE_IRIS == MODE_BLUE_ALIGN or MODE_IRIS == MODE_NAVIGATION):
         contours, hierarchy = cv2.findContours(blue_mask,
@@ -237,76 +256,74 @@ def imageCallback(data):
 
                 center = (int(Middle["m10"] / Middle["m00"]), int(Middle["m01"] / Middle["m00"]))
 
-                if raduis > 60:
+                if raduis > 50:
                     cv2.circle(frame,(int (x),int (y)),int(raduis),(0,0,0),2)
                     cv2.circle(frame,center,5,(0,0,0),-1)
                     points.appendleft(center)
-
-                    blue.isFind = True
-                    print("mavi bulundu",blue.isFind)
+                    blueFound = True
+                    bluePool.isFind = True
+                    print("Mavi bulundu")
 
                     if(enkUzunlukBlue == 100):
-                        blue.x=vehicle.location.global_relative_frame.lat
-                        blue.y=vehicle.location.global_relative_frame.lon
+                        bluePool.x=vehicle.location.global_relative_frame.lat
+                        bluePool.y=vehicle.location.global_relative_frame.lon
                 
 
-        DxCount = 0.0
-        DyCount = 0.0
+                    DxCount = 0.0
+                    DyCount = 0.0
 
-        for i in np.arange(1, len(points)):
-            if points[i - 1] is None or points[i] is None:
-                continue
-            #check if 400,400 is in surface of circle ((x,y),raduis) if case then no need to do calculations
+                    for i in np.arange(1, len(points)):
+                        if points[i - 1] is None or points[i] is None:
+                            continue
+                        #check if 400,400 is in surface of circle ((x,y),raduis) if case then no need to do calculations
 
-            if i == 1:
-                
-                #print("Y points: " + str(points[i][1]))
+                        if i == 1:
 
-                DxCount = float(points[i][0])-320.0 
-                DyCount = 250 - float(points[i][1])
+                            DxCount = float(points[i][0])-320.0 
+                            DyCount = 250 - float(points[i][1])
 
-                cv2.line(frame, points[i - 1], (320,250), (0, 255, 0), 5)
+                            cv2.line(frame, points[i - 1], (320,250), (0, 255, 0), 5)
 
-                InsideCircle = False
-                if (MODE_IRIS == MODE_BLUE_ALIGN and int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis/2)**2:
-                    InsideCircle = True
+                            InsideCircle = False
+                            if (MODE_IRIS == MODE_BLUE_ALIGN and int(points[i][0]) - 320)**2 + (int(points[i][1]) - 250)**2 < (raduis)**2:
+                                InsideCircle = True
+        
+        if(counter % UpdateRate == 0 and blueFound):
 
-    if(counter % UpdateRate ) == 0 and (MODE_IRIS == MODE_BLUE_ALIGN or MODE_IRIS == MODE_NAVIGATION):
+            DisplayDx = DxCount
+            DisplayDy = DyCount
 
-        DisplayDx = DxCount
-        DisplayDy = DyCount
+            Xmovement = (DxCount / DivisionValueX)
+            Ymovement = (DyCount / DivisionValueY)
 
-        Xmovement = (DxCount / DivisionValueX)
-        Ymovement = (DyCount / DivisionValueY)
+            if Xmovement > MaxMovementRatePositive:
+                Xmovement = MaxMovementRatePositive
+            elif Xmovement < MaxMovementRateNegative:
+                Xmovement = MaxMovementRateNegative
+            if Ymovement > MaxMovementRatePositive:
+                Ymovement = MaxMovementRatePositive
+            elif Ymovement < MaxMovementRateNegative:
+                Ymovement = MaxMovementRateNegative
 
-        if Xmovement > MaxMovementRatePositive:
-            Xmovement = MaxMovementRatePositive
-        elif Xmovement < MaxMovementRateNegative:
-            Xmovement = MaxMovementRateNegative
-        if Ymovement > MaxMovementRatePositive:
-            Ymovement = MaxMovementRatePositive
-        elif Ymovement < MaxMovementRateNegative:
-            Ymovement = MaxMovementRateNegative
+            AltitudeCommand = 0.0
+        
+            hipo = math.sqrt(Xmovement * Xmovement + Ymovement * Ymovement)
+            if hipo != 0.0:
+                if hipo < enkUzunlukBlue:
+                    print("daha yakın nokta bulundu")
+                    enkUzunlukBlue = hipo
+                    bluePool.x=vehicle.location.global_relative_frame.lat
+                    bluePool.y=vehicle.location.global_relative_frame.lon
+                    print("mavi x:",bluePool.x)
+                    print("mavi y:",bluePool.y)
 
-        AltitudeCommand = 0.0
+        
+
     
-        hipo = math.sqrt(Xmovement * Xmovement + Ymovement * Ymovement)
-        if hipo != 0.0:
-            if hipo < enkUzunlukBlue:
-                print("daha yakın nokta bulundu")
-                enkUzunlukBlue = hipo
-                blue.x=vehicle.location.global_relative_frame.lat
-                blue.y=vehicle.location.global_relative_frame.lon
-
-                
-                
-
-                print("mavi x:",blue.x)
-                print("mavi y:",blue.y)
 
         if(MODE_IRIS == MODE_BLUE_ALIGN):
-            Ymovement = Ymovement * 30
-            Xmovement = Xmovement * 30
+            Ymovement = Ymovement * 35
+            Xmovement = Xmovement * 35
             altsinir = 0.2
             if Ymovement < 0.05 and Xmovement < 0.05:
                 Ymovement = 0
@@ -339,7 +356,7 @@ def imageCallback(data):
                 else:
                     print("iniş")
                     goto_position_target_local_ned(Ymovement, Xmovement, 0.5)
-                    print(" Attitude: %s" % vehicle.location.global_relative_frame.alt)
+                    print(" Altitude: %s" % vehicle.location.global_relative_frame.alt)
     
     
             
@@ -462,106 +479,116 @@ def send_ned_velocity(velocity_x, velocity_y, velocity_z, duration):
      
 
 
+def mainControl(data):
+    global MODE_IRIS
+    global LAST_MODE
+    global Xmovement
+    global Ymovement   
+    if MODE_IRIS == MODE_NAVIGATION:        
+        if vehicle.mode != VehicleMode("AUTO"):
+            vehicle.mode = VehicleMode("AUTO")
+            print("mode navigation")
+            LAST_MODE = MODE_NAVIGATION
 
+        elif redPool.isFind and bluePool.isFind:
+            vehicle.mode = VehicleMode("GUIDED")
+            time.sleep(1)
+            MODE_IRIS = MODE_GO_BLUE
+            
+        elif vehicle.commands.next == len(cmds):
+            print("havuzlar bulunamadı eve dönülüyor")
+            MODE_IRIS = MODE_GO_HOME
+            
+        print(vehicle.commands.next,"/",len(cmds),"alan taranıyor")
+
+    elif MODE_IRIS == MODE_GO_BLUE:           
+        if LAST_MODE != MODE_GO_BLUE:
+            print("mode go blue")            
+            cmds.clear()
+            time.sleep(5)
+            cmds.add(Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 0, 25))
+            cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,bluePool.x ,bluePool.y,25))
+            cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,bluePool.x ,bluePool.y,25))
+            cmds.upload()               
+            vehicle.mode = VehicleMode("AUTO")
+            time.sleep(2)
+            LAST_MODE = MODE_GO_BLUE
+        else:
+            print("mavi havuza gidiliyor...")
+            if vehicle.commands.next == len(cmds):
+                print("mavi havuza ulaşıldı")
+                MODE_IRIS = MODE_BLUE_ALIGN
+                time.sleep(5)
+
+    elif MODE_IRIS == MODE_BLUE_ALIGN:
+        if LAST_MODE == MODE_GO_BLUE:
+            print("mode blue align")
+            vehicle.mode = VehicleMode("GUIDED")
+            Xmovement = 0
+            Ymovement = 0
+            LAST_MODE = MODE_BLUE_ALIGN
+            
+            
+        
+
+    elif MODE_IRIS == MODE_GO_RED:           
+        if LAST_MODE == MODE_BLUE_ALIGN:
+            print("MODE go red")            
+            cmds.clear()
+            time.sleep(5)
+            cmds.add(Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 0, 25))
+            cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,redPool.x ,redPool.y,25))
+            cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,redPool.x ,redPool.y,25))
+            cmds.upload()                
+            vehicle.mode = VehicleMode("AUTO")
+            time.sleep(2)
+            LAST_MODE = MODE_GO_RED
+        else:
+            print("kırmızı havuza gidiliyor...")
+            if vehicle.commands.next == len(cmds):
+                print("kırmızı havuza ulaşıldı")
+                
+                MODE_IRIS = MODE_RED_ALIGN
+                vehicle.mode = VehicleMode("GUIDED")
+                time.sleep(5)
+
+    elif MODE_IRIS == MODE_RED_ALIGN:
+        if LAST_MODE == MODE_GO_RED:
+            print("mode red align")
+            Xmovement = 0
+            Ymovement = 0
+            LAST_MODE = MODE_RED_ALIGN
+            
+
+            
+            
+        
+    elif MODE_IRIS == MODE_GO_HOME:
+        if LAST_MODE == MODE_RED_ALIGN or LAST_MODE == MODE_NAVIGATION:
+            vehicle.mode = VehicleMode("RTL")
+            LAST_MODE = MODE_GO_HOME
+            print("eve dönülüyor")
+    time.sleep(1/100)
 
 
 if __name__ == "__main__":
     arm_and_takeoff(20)
     gorev(-35.36311117 ,149.16577231,-35.36349584 ,149.16614279,20)
     rospy.init_node('drone_control', anonymous=True)
-    #rospy.Subscriber("/webcam/image_raw", numpy_msg(Image), imageCallback)
-
-    while True:
-        Ymovement = 0
-        Xmovement = 0
-        msg = rospy.wait_for_message("/webcam/image_raw", numpy_msg(Image),timeout=None)
-        imageCallback(msg)
-        if MODE_IRIS == MODE_NAVIGATION:
-            if vehicle.mode != VehicleMode("AUTO"):
-                vehicle.mode = VehicleMode("AUTO")
-                print("mode navigation")
-                LAST_MODE = MODE_NAVIGATION
-
-            elif red.isFind and blue.isFind:
-                vehicle.mode = VehicleMode("GUIDED")
-                time.sleep(1)
-                MODE_IRIS = MODE_GO_BLUE
-                
-            elif vehicle.commands.next == len(cmds):
-                print("havuzlar bulunamadı eve dönülüyor")
-                MODE_IRIS = MODE_GO_HOME
-                
-            print(vehicle.commands.next,"/",len(cmds),"alan taranıyor")
+    rospy.Subscriber("/clock", numpy_msg(Clock), mainControl)
+    rospy.Subscriber("/webcam/image_raw", numpy_msg(Image), imageCallback)
     
-        elif MODE_IRIS == MODE_GO_BLUE:           
-            if LAST_MODE == MODE_NAVIGATION:
-                print("mode go blue")            
-                cmds.clear()
-                time.sleep(5)
-                cmds.add(Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 0, 30))
-                cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,blue.x ,blue.y,30))
-                cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,blue.x ,blue.y,30))
-                cmds.upload()               
-                vehicle.mode = VehicleMode("AUTO")
-                time.sleep(2)
-                LAST_MODE = MODE_GO_BLUE
-            else:
-                print("mavi havuza gidiliyor...")
-                if vehicle.commands.next == len(cmds):
-                    print("mavi havuza ulaşıldı")
-                    MODE_IRIS = MODE_BLUE_ALIGN
-                    time.sleep(5)
+    rospy.spin()
 
-        elif MODE_IRIS == MODE_BLUE_ALIGN:
-            if LAST_MODE == MODE_GO_BLUE:
-                print("mode blue align")
-                vehicle.mode = VehicleMode("GUIDED")
-                LAST_MODE = MODE_BLUE_ALIGN
-                InsideCircle = False
-                sleepRate = 1/5
-                
-            
-
-        elif MODE_IRIS == MODE_GO_RED:           
-            if LAST_MODE == MODE_BLUE_ALIGN:
-                print("MODE go red")            
-                cmds.clear()
-                time.sleep(5)
-                cmds.add(Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 0, 30))
-                cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,red.x ,red.y,30))
-                cmds.add(Command(0,0,0,mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,0,0,0,0,0,0,red.x ,red.y,30))
-                cmds.upload()                
-                vehicle.mode = VehicleMode("AUTO")
-                time.sleep(2)
-                LAST_MODE = MODE_GO_RED
-            else:
-                print("kırmızı havuza gidiliyor...")
-                if vehicle.commands.next == len(cmds):
-                    print("kırmızı havuza ulaşıldı")
-                    InsideCircle = False
-                    MODE_IRIS = MODE_RED_ALIGN
-                    vehicle.mode = VehicleMode("GUIDED")
-                    time.sleep(5)
-
-        elif MODE_IRIS == MODE_RED_ALIGN:
-            if LAST_MODE == MODE_GO_RED:
-                print("mode red align")
-                LAST_MODE = MODE_RED_ALIGN
-                InsideCircle = False
-                sleepRate = 1/5
-                
-               
-            
-        elif MODE_IRIS == MODE_GO_HOME:
-            if LAST_MODE == MODE_RED_ALIGN or LAST_MODE == MODE_NAVIGATION:
-                vehicle.mode = VehicleMode("RTL")
-                LAST_MODE = MODE_GO_HOME
-            print("eve dönülüyor")
-            time.sleep(1)
+    print("bitti")
+        
+    
+    
+        
         
                
     
-    print("bitti")
+
 
 
 
